@@ -74,6 +74,7 @@ Rules:
 ## Conventions
 
 - **Commit at the end of every turn**, before waiting for user input (the user asked for this). Run tests, clippy and `cargo fmt` first. Commit messages end with a `Co-Authored-By` line.
+- **Push after committing** (the user allowed it on 2026-11-14): `git push origin main`. Commits from outside this session land in the repo too, so check `git status`/`git log` first and only stage your own files.
 - **Restart the service after implementing something** (the user asked for this): run `./restart.sh` after the commit; it only swaps the process once the build has finished, so keep it that way to keep downtime short. It runs on port 63151 with the DB at `~/.ramdashboard/data.sqlite`.
 - Keep the generated spec accurate. If a route's possible status codes change, update the responder types in `api.rs` and the test `openapi_spec_documents_all_routes`.
 - Store methods take an explicit `now` so the unit tests don't need sleeps.
