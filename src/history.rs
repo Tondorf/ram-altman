@@ -122,7 +122,8 @@ impl History {
                  total_ram_bytes INTEGER NOT NULL,
                  reported_at     TEXT    NOT NULL,
                  timeout_minutes INTEGER,
-                 memory_type     TEXT
+                 memory_type     TEXT,
+                 deleted         INTEGER NOT NULL DEFAULT 0
              );
              DROP INDEX IF EXISTS reports_host_time;
              CREATE INDEX IF NOT EXISTS reports_user_host_time
@@ -147,6 +148,16 @@ impl History {
             .exists([])?;
         if !has_memory_type {
             conn.execute("ALTER TABLE reports ADD COLUMN memory_type TEXT", [])?;
+        }
+        // ... and before DELETE marked reports instead of removing them.
+        let has_deleted = conn
+            .prepare("SELECT 1 FROM pragma_table_info('reports') WHERE name = 'deleted'")?
+            .exists([])?;
+        if !has_deleted {
+            conn.execute(
+                "ALTER TABLE reports ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
         }
         conn.execute(
             "UPDATE reports
@@ -302,26 +313,32 @@ impl History {
 
     /// The newest report of every (username, hostname) that reported at or
     /// after `since`, as live hosts with the user's stored color (empty if the
-    /// user has none). Used to refill the in-memory store at startup.
+    /// user has none). Hosts whose newest report is marked deleted are left
+    /// out. Used to refill the in-memory store at startup.
     pub fn latest_reports(&self, since: DateTime<Utc>) -> rusqlite::Result<Vec<Host>> {
         let conn = self.conn.lock().unwrap();
         // SQLite takes the bare columns from the row that has the MAX().
         let mut stmt = conn.prepare(
             "SELECT r.username, r.hostname, r.free_ram_bytes, r.total_ram_bytes,
                     MAX(r.reported_at), r.timeout_minutes, COALESCE(u.color, ''),
-                    r.memory_type
+                    r.memory_type, r.deleted
              FROM reports r LEFT JOIN users u ON u.username = r.username
              WHERE r.reported_at >= ?1
              GROUP BY r.username, r.hostname",
         )?;
-        stmt.query_map([ts(since)], |row| {
+        // The deleted check has to come after picking the newest row per host,
+        // or an older, unmarked report would bring a deleted host back.
+        let rows = stmt.query_map([ts(since)], |row| {
+            if row.get::<_, bool>(8)? {
+                return Ok(None);
+            }
             let reported_at: String = row.get(4)?;
             let hostname: String = row.get(1)?;
             let memory_type = row
                 .get::<_, Option<String>>(7)?
                 .and_then(|t| MemoryType::parse(&t))
                 .unwrap_or_else(|| MemoryType::default_for(&hostname));
-            Ok(Host {
+            Ok(Some(Host {
                 username: row.get(0)?,
                 hostname,
                 free_ram_bytes: row.get(2)?,
@@ -330,9 +347,13 @@ impl History {
                 timeout_minutes: row.get(5)?,
                 color: row.get(6)?,
                 memory_type,
-            })
-        })?
-        .collect()
+            }))
+        })?;
+        let mut hosts = Vec::new();
+        for row in rows {
+            hosts.extend(row?);
+        }
+        Ok(hosts)
     }
 
     /// Every stored user color, by username.
@@ -345,13 +366,19 @@ impl History {
             .collect()
     }
 
-    /// Deletes every stored report of one user on one host. Returns how many
-    /// were removed. The user's color is kept.
-    pub fn delete_host(&self, username: &str, hostname: &str) -> rusqlite::Result<usize> {
-        self.conn.lock().unwrap().execute(
-            "DELETE FROM reports WHERE username = ?1 AND hostname = ?2",
+    /// Marks the newest report of one user on one host as deleted, so the host
+    /// isn't restored at startup; its history stays. Returns `false` if there
+    /// is no report or the newest one is already marked. A later report is a
+    /// new, unmarked row, so the host comes back with it.
+    pub fn mark_deleted(&self, username: &str, hostname: &str) -> rusqlite::Result<bool> {
+        let marked = self.conn.lock().unwrap().execute(
+            "UPDATE reports SET deleted = 1
+             WHERE deleted = 0 AND id = (
+                 SELECT id FROM reports WHERE username = ?1 AND hostname = ?2
+                 ORDER BY reported_at DESC, id DESC LIMIT 1)",
             params![username, hostname],
-        )
+        )?;
+        Ok(marked > 0)
     }
 
     /// Deletes reports older than `cutoff`. Returns how many were removed.
@@ -480,23 +507,40 @@ mod tests {
     }
 
     #[test]
-    fn delete_host_removes_only_that_hosts_reports() {
+    fn mark_deleted_hides_the_host_from_restore_only() {
         let t0 = Utc::now().trunc_subsecs(6);
+        let s = TimeDelta::seconds;
         let h = History::open(":memory:").unwrap();
         h.record(&host("a", 1, t0)).unwrap();
-        h.record(&host("a", 2, t0)).unwrap();
+        h.record(&host("a", 2, t0 + s(1))).unwrap();
         h.record(&host("b", 3, t0)).unwrap();
         let other_user = Host {
             username: "v".into(),
             ..host("a", 4, t0)
         };
         h.record(&other_user).unwrap();
+        let restored = |h: &History| {
+            let mut v: Vec<_> = h
+                .latest_reports(t0)
+                .unwrap()
+                .into_iter()
+                .map(|x| format!("{}/{}", x.username, x.hostname))
+                .collect();
+            v.sort();
+            v
+        };
 
-        assert_eq!(h.delete_host("u", "a").unwrap(), 2);
-        assert_eq!(h.delete_host("u", "a").unwrap(), 0);
-        assert!(h.for_host("u", "a", None, 10).unwrap().is_empty());
-        assert_eq!(h.for_host("u", "b", None, 10).unwrap().len(), 1);
-        assert_eq!(h.for_host("v", "a", None, 10).unwrap().len(), 1);
+        assert!(h.mark_deleted("u", "a").unwrap());
+        assert!(!h.mark_deleted("u", "a").unwrap(), "already marked");
+        assert!(!h.mark_deleted("u", "nope").unwrap(), "no reports");
+        // History is kept, but u/a (and only u/a) is no longer restored, even
+        // though an older report of it is unmarked.
+        assert_eq!(h.for_host("u", "a", None, 10).unwrap().len(), 2);
+        assert_eq!(restored(&h), ["u/b", "v/a"]);
+
+        // A new report brings it back.
+        h.record(&host("a", 5, t0 + s(2))).unwrap();
+        assert_eq!(restored(&h), ["u/a", "u/b", "v/a"]);
     }
 
     #[test]

@@ -189,7 +189,7 @@ impl OpenApiResponderInner for DeleteError {
         describe(
             &mut responses,
             404,
-            "Host not found (neither live nor in the history)",
+            "Nothing to remove (not live, and no history or already removed)",
         );
         add_schema_response(
             &mut responses,
@@ -197,7 +197,7 @@ impl OpenApiResponderInner for DeleteError {
             "application/json",
             r#gen.json_schema::<ErrorBody>(),
         )?;
-        describe(&mut responses, 500, "Database error (nothing was deleted)");
+        describe(&mut responses, 500, "Database error (nothing was changed)");
         Ok(responses)
     }
 }
@@ -386,11 +386,13 @@ pub fn get_host(
         .ok_or_else(|| not_found(&username, &hostname))
 }
 
-/// # Delete a host and its history
+/// # Remove a host from the dashboard
 ///
-/// Removes the host from the dashboard and deletes all of its stored reports.
-/// The user's color is kept. `204` if there was anything to delete (a live
-/// entry or history), `404` if neither exists. Requires the API token.
+/// Removes the host from the dashboard and marks its newest stored report as
+/// deleted, so it doesn't come back when the server restarts. The history is
+/// kept. The host reappears with its next report. `204` if there was anything
+/// to remove (a live entry or an unmarked newest report), `404` otherwise.
+/// Requires the API token.
 #[openapi(tag = "Reporting")]
 #[delete("/report/<username>/<hostname>")]
 pub fn delete_host(
@@ -401,12 +403,12 @@ pub fn delete_host(
     history: &State<Arc<History>>,
 ) -> Result<NoContent, DeleteError> {
     let (username, hostname) = parse_target(username, hostname)?;
-    // History first: if it fails, the live entry stays too (nothing half-deleted).
-    let deleted_reports = history
-        .delete_host(&username, &hostname)
+    // History first: if it fails, the live entry stays too (nothing half-done).
+    let marked = history
+        .mark_deleted(&username, &hostname)
         .map_err(DeleteError::Database)?;
     let was_live = store.remove(&username, &hostname, Utc::now());
-    if was_live || deleted_reports > 0 {
+    if was_live || marked {
         Ok(NoContent)
     } else {
         Err(DeleteError::Api(not_found(&username, &hostname)))
