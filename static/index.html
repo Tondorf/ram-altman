@@ -255,7 +255,7 @@
     <img class="pic" data-name="sam-happy" data-fallback="😄" alt="Happy Sam Altman">
   </div>
 </header>
-<section class="chart" aria-label="Free vs total RAM, last 2 days">
+<section class="chart" aria-label="Free vs total RAM, last 10 hours">
   <p class="totals" aria-live="polite"><span id="total-all">0G Total</span><span id="total-free">0G Free</span><span id="money-wasted">0€ Wasted</span></p>
   <div class="chart-head">
     <ul class="legend">
@@ -611,12 +611,13 @@ async function refresh() {
 }
 // ---------------------------------------------------------------------------
 // Chart: free vs total RAM of all hosts over time, per-user lines faded.
-// The x axis is ln(age + 900 s) (api::TIMELINE_AGE_OFFSET_SECS): recent
-// minutes get more room than past hours, without squashing the days.
+// The last 10 hours on a linear time axis, sampled evenly (scale=linear):
+// 120 points, one every 5 minutes.
 // ---------------------------------------------------------------------------
-const TIMELINE_API = "." + "__API_BASE__" + "/v1/timeline";
+const TIMELINE_SPAN_SECS = 10 * 3600;
+const TIMELINE_API =
+  "." + "__API_BASE__" + `/v1/timeline?scale=linear&span_secs=${TIMELINE_SPAN_SECS}&points=120`;
 const TIMELINE_MS = 15000;
-const AGE_OFFSET = 900;
 const SVG_NS = "http://www.w3.org/2000/svg";
 const chartBox = document.getElementById("chart");
 let timeline = null;
@@ -662,15 +663,14 @@ function drawChart() {
   if (!values.length) {
     const p = document.createElement("p");
     p.className = "empty";
-    p.textContent = "No reports in the last 2 days.";
+    p.textContent = "No reports in the last 10 hours.";
     chartBox.replaceChildren(p);
     return;
   }
 
   const m = { l: 58, r: 14, t: 12, b: 24 };
-  const lx = (age) => Math.log(Math.max(0, age) + AGE_OFFSET);
-  const lo = lx(timeline.span_secs), hi = lx(0);
-  const X = (age) => m.l + ((lx(age) - lo) / (hi - lo)) * (W - m.l - m.r);
+  const span = timeline.span_secs;
+  const X = (age) => m.l + (1 - Math.min(Math.max(age, 0), span) / span) * (W - m.l - m.r);
   // One bogus report (say 100 PB) would flatten everything else for two
   // days: values above 20x the median total are left out of the scale and
   // drawn clipped at the top edge. The tooltip still shows them in full.
@@ -684,8 +684,8 @@ function drawChart() {
   const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img" });
   const free = all.free_ram_bytes.at(-1), total = all.total_ram_bytes.at(-1);
   svg.setAttribute("aria-label", free == null
-    ? "RAM over the last 2 days; no hosts are reporting now."
-    : `RAM over the last 2 days; now ${fmt(free)} free of ${fmt(total)}.`);
+    ? "RAM over the last 10 hours; no hosts are reporting now."
+    : `RAM over the last 10 hours; now ${fmt(free)} free of ${fmt(total)}.`);
 
   // Grid and axes.
   const axis = svgEl("g", { class: "axis" });
@@ -695,8 +695,10 @@ function drawChart() {
     t.textContent = gib(v);
     axis.append(t);
   }
-  const ticks = [[172800, "2d"], [86400, "1d"], [43200, "12h"], [21600, "6h"], [10800, "3h"],
-    [3600, "1h"], [1800, "30m"], [600, "10m"], [0, "now"]].filter(([a]) => a <= timeline.span_secs);
+  // A tick every hour of the span: "10h", "9h", ..., "1h", "now".
+  const ticks = [];
+  for (let h = Math.floor(span / 3600); h >= 1; h--) ticks.push([h * 3600, `${h}h`]);
+  ticks.push([0, "now"]);
   for (const [a, label] of ticks) {
     const x = X(a);
     axis.append(svgEl("line", { class: "grid", x1: x, x2: x, y1: m.t, y2: H - m.b, "stroke-dasharray": "2 4" }));

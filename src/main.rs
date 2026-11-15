@@ -699,11 +699,32 @@ mod tests {
         assert_eq!(tl["users"][1]["total_ram_bytes"][2], 4);
         assert!(tl["users"][1]["color"].as_str().unwrap().starts_with('#'));
 
+        // scale=linear: evenly spaced sample times, still ending at now.
+        let tl: Value = c
+            .get("/api/v1/timeline?span_secs=600&points=3&scale=linear")
+            .dispatch()
+            .into_json()
+            .unwrap();
+        let at = |i: usize| {
+            chrono::DateTime::parse_from_rfc3339(tl["samples"][i].as_str().unwrap()).unwrap()
+        };
+        assert_eq!((at(1) - at(0)).num_seconds(), 300);
+        assert_eq!((at(2) - at(1)).num_seconds(), 300);
+        assert_eq!(tl["samples"][2], tl["generated_at"]);
+        assert_eq!(tl["total"]["free_ram_bytes"][2], 31);
+        let log: Value = c
+            .get("/api/v1/timeline?span_secs=600&points=3&scale=log")
+            .dispatch()
+            .into_json()
+            .unwrap();
+        assert_eq!(log["total"]["free_ram_bytes"][2], 31);
+
         for bad in [
             "span_secs=59",
             "span_secs=2592001",
             "points=1",
             "points=1001",
+            "scale=lin",
         ] {
             let res = c.get(format!("/api/v1/timeline?{bad}")).dispatch();
             assert_eq!(res.status(), Status::UnprocessableEntity, "{bad}");

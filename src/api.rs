@@ -438,14 +438,17 @@ pub fn dashboard(
 /// history at `points` times (default 120, 2-1000) spread logarithmically
 /// over the last `span_secs` (default 172800 = 2 days, 60-2592000): the
 /// samples are evenly spaced in `ln(age + 900 s)`, from `span_secs` ago to now,
-/// so recent minutes get more samples than past hours. A host counts at
+/// so recent minutes get more samples than past hours. With `scale=linear`
+/// the samples are evenly spaced in time instead (`scale=log` is the
+/// default). A host counts at
 /// a sample time if its latest report before it is within its timeout (as on
 /// the dashboard). Values are `null` where no host was live.
 #[openapi(tag = "Dashboard")]
-#[get("/timeline?<span_secs>&<points>")]
+#[get("/timeline?<span_secs>&<points>&<scale>")]
 pub fn timeline(
     span_secs: Option<u64>,
     points: Option<usize>,
+    scale: Option<&str>,
     store: &State<Arc<Store>>,
     history: &State<Arc<History>>,
 ) -> Result<Json<Timeline>, HistoryError> {
@@ -461,7 +464,11 @@ pub fn timeline(
         return Err(Invalid(format!("points must be 2-{TIMELINE_MAX_POINTS}")).into());
     }
     let now = Utc::now().trunc_subsecs(6);
-    let samples = log_samples(now, span_secs, points);
+    let samples = match scale {
+        None | Some("log") => log_samples(now, span_secs, points),
+        Some("linear") => linear_samples(now, span_secs, points),
+        Some(_) => return Err(Invalid("scale must be log or linear".into()).into()),
+    };
     let per_user = history
         .timeline(&samples, store.stale_after())
         .map_err(HistoryError::Database)?;
@@ -497,6 +504,17 @@ pub fn timeline(
         total: Series::from_samples(&total),
         users,
     }))
+}
+
+/// `points` sample times, oldest first: ages from `span_secs` down to 0,
+/// evenly spaced in time.
+fn linear_samples(now: DateTime<Utc>, span_secs: u64, points: usize) -> Vec<DateTime<Utc>> {
+    (0..points)
+        .map(|i| {
+            let age = span_secs as f64 * (1.0 - i as f64 / (points - 1) as f64);
+            now - chrono::TimeDelta::microseconds((age * 1e6).round() as i64)
+        })
+        .collect()
 }
 
 /// `points` sample times, oldest first: ages from `span_secs` down to 0,
