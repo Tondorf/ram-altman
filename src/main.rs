@@ -340,19 +340,9 @@ mod tests {
             report(&c, "h", "a", 1, u64::MAX),
             Status::UnprocessableEntity
         );
-        // Over 400 GiB is rejected and not stored; exactly 400 GiB is fine.
-        let max = crate::model::MAX_TOTAL_RAM_BYTES;
-        assert_eq!(
-            report(&c, "big", "a", 1, max + 1),
-            Status::UnprocessableEntity
-        );
-        assert_eq!(
-            c.get("/api/v1/report/a/big").dispatch().status(),
-            Status::NotFound
-        );
-        let res = c.get("/api/v1/report/a/big/history").dispatch();
-        assert_eq!(res.into_json::<Value>().unwrap()["entries"], json!([]));
-        assert_eq!(report(&c, "big", "a", 1, max), Status::Created);
+        // No size limit below SQLite's i64::MAX (the 400 GiB limit is gone).
+        assert_eq!(report(&c, "big", "a", 1, 1 << 40), Status::Created);
+        assert_eq!(report(&c, "big", "a", 1, i64::MAX as u64), Status::Ok);
 
         let res = c
             .put("/api/v1/report/a/h")

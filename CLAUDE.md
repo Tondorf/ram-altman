@@ -56,7 +56,7 @@ Rules:
 - **Memory and time:** memory values are bytes (u64), and timestamps are RFC 3339 UTC with microsecond precision.
 - **Identity:** a host is `{username}/{hostname}`. Every per-host route lives under `/v1/report/{username}/{hostname}` (PUT, GET, DELETE, plus `/history`), and the same machine reported by two users is two separate dashboard entries with separate histories. The response of `history` carries `username` and `hostname` at the top level, not per entry.
 - **Hostnames:** 1-253 chars of `[A-Za-z0-9._-]`, case-insensitive, stored lowercased.
-- **Validation:** the username (path segment, percent-decoded, case-sensitive) must be non-empty after trimming and ≤256 bytes; an empty segment (`/report//h`) never matches the route and gives 404; `0 < total ≤ 400 GiB` (`model::MAX_TOTAL_RAM_BYTES`, 422 and nothing stored above it; the user asked, after bogus multi-TB reports; existing rows above it were deleted from the real DB on 2026-11-13, backup in `~/.ramdashboard/data-before-400g-cleanup.sqlite`); `free <= total`; unknown JSON fields are rejected.
+- **Validation:** the username (path segment, percent-decoded, case-sensitive) must be non-empty after trimming and ≤256 bytes; an empty segment (`/report//h`) never matches the route and gives 404; `0 < total ≤ i64::MAX` (SQLite's integer limit; a 400 GiB limit existed on 2026-11-13/15 and was removed at the user's request. When it was added, existing rows above 400 GiB were deleted from the real DB; backup in `~/.ramdashboard/data-before-400g-cleanup.sqlite`. The chart still keeps outliers above 20x the median total out of its scale); `free <= total`; unknown JSON fields are rejected.
 - **Ranking:** `free_ram_bytes` descending, ties broken by hostname then username ascending, `rank` starts at 1.
 - **Errors:** always `{"error": "..."}`, including Rocket's own catcher responses.
 - **`last_seen`:** set by the server when the report arrives.
@@ -88,7 +88,7 @@ Rules:
 - **Edition 2024:** the okapi module `gen` must be written `rocket_okapi::r#gen`.
 - **Testing startup failures:** an unhandled `rocket::Error` panics when dropped. Tests that expect launch to fail must call `e.kind()`.
 - **`?limit=` parsing:** query `Option<T>` is infallible in Rocket, so `?limit=abc` is silently treated as no limit (or as the default 100 for history). That's why the ranges are checked by hand, and why the spec shows minimum 0.
-- **rusqlite and u64:** rusqlite 0.42 needs the `fallible_uint` feature for u64. SQLite integers are i64, which would cap `total_ram_bytes` at `i64::MAX` (the 400 GiB limit is far below that).
+- **rusqlite and u64:** rusqlite 0.42 needs the `fallible_uint` feature for u64. SQLite integers are i64, which would cap `total_ram_bytes` at `i64::MAX` (the only upper limit on it).
 - **Timestamps in SQLite:** stored as fixed-width RFC 3339 text (`...123456Z`), so string order is time order. `last_seen` is truncated to microseconds so the live API and the history agree.
 - **`PRAGMA journal_mode`** returns a row, so it must go through `query_row`, not `execute`.
 - **Blocking DB calls:** SQLite calls run directly in the (sync) route handlers. That's fine at this scale (WAL, `synchronous = NORMAL`). The sweeper's prune uses `spawn_blocking`.

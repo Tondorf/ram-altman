@@ -7,9 +7,6 @@ pub const MAX_HOSTNAME_LEN: usize = 253;
 pub const MAX_USERNAME_LEN: usize = 256;
 pub const MIN_TIMEOUT_MINUTES: u32 = 1;
 pub const MAX_TIMEOUT_MINUTES: u32 = 60;
-/// Largest accepted `total_ram_bytes` (400 GiB): no reporting host has more,
-/// and bogus reports (there was a 100 PB one) would wreck the chart scale.
-pub const MAX_TOTAL_RAM_BYTES: u64 = 400 << 30;
 
 /// Kind of memory a host reports. `system` and `vram` are the generic
 /// defaults; the rest name a specific DDR or GDDR generation.
@@ -83,9 +80,8 @@ impl MemoryType {
 pub struct HostReport {
     /// Free (available) RAM in bytes. Must be <= `total_ram_bytes`.
     pub free_ram_bytes: u64,
-    /// Total RAM in bytes, at most 400 GiB (429496729600). Larger reports are
-    /// rejected with 422 and not stored.
-    #[schemars(range(min = 1, max = 429_496_729_600u64))]
+    /// Total RAM in bytes (at most 2^63-1).
+    #[schemars(range(min = 1))]
     pub total_ram_bytes: u64,
     /// Optional dashboard color for the user, `#rrggbb`. Sets (or changes) the
     /// user's color for all of their hosts. Without it, a user gets a random
@@ -126,10 +122,9 @@ impl HostReport {
         if self.free_ram_bytes > self.total_ram_bytes {
             return Err("free_ram_bytes must not exceed total_ram_bytes".into());
         }
-        if self.total_ram_bytes > MAX_TOTAL_RAM_BYTES {
-            return Err(format!(
-                "total_ram_bytes must be at most {MAX_TOTAL_RAM_BYTES} (400 GiB)"
-            ));
+        // SQLite integers are signed 64-bit.
+        if self.total_ram_bytes > i64::MAX as u64 {
+            return Err(format!("total_ram_bytes must be at most {}", i64::MAX));
         }
         if let Some(color) = &self.color {
             normalize_color(color)?;
