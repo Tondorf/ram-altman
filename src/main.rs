@@ -699,25 +699,26 @@ mod tests {
         assert_eq!(tl["users"][1]["total_ram_bytes"][2], 4);
         assert!(tl["users"][1]["color"].as_str().unwrap().starts_with('#'));
 
-        // scale=linear: evenly spaced sample times, still ending at now.
-        let tl: Value = c
-            .get("/api/v1/timeline?span_secs=600&points=3&scale=linear")
-            .dispatch()
-            .into_json()
-            .unwrap();
-        let at = |i: usize| {
-            chrono::DateTime::parse_from_rfc3339(tl["samples"][i].as_str().unwrap()).unwrap()
+        // Gaps between the 3 sample times, in seconds.
+        let gaps = |query: &str| -> (i64, i64) {
+            let tl: Value = c
+                .get(format!("/api/v1/timeline?span_secs=600&points=3{query}"))
+                .dispatch()
+                .into_json()
+                .unwrap();
+            assert_eq!(tl["samples"][2], tl["generated_at"], "ends at now");
+            assert_eq!(tl["total"]["free_ram_bytes"][2], 31);
+            let at = |i: usize| {
+                chrono::DateTime::parse_from_rfc3339(tl["samples"][i].as_str().unwrap()).unwrap()
+            };
+            ((at(1) - at(0)).num_seconds(), (at(2) - at(1)).num_seconds())
         };
-        assert_eq!((at(1) - at(0)).num_seconds(), 300);
-        assert_eq!((at(2) - at(1)).num_seconds(), 300);
-        assert_eq!(tl["samples"][2], tl["generated_at"]);
-        assert_eq!(tl["total"]["free_ram_bytes"][2], 31);
-        let log: Value = c
-            .get("/api/v1/timeline?span_secs=600&points=3&scale=log")
-            .dispatch()
-            .into_json()
-            .unwrap();
-        assert_eq!(log["total"]["free_ram_bytes"][2], 31);
+        // Linear by default: evenly spaced in time.
+        assert_eq!(gaps(""), (300, 300));
+        assert_eq!(gaps("&scale=linear"), (300, 300));
+        // scale=log: denser towards now.
+        let (older, newer) = gaps("&scale=log");
+        assert!(older > newer, "log spacing: {older} s then {newer} s");
 
         for bad in [
             "span_secs=59",

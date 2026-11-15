@@ -611,12 +611,12 @@ async function refresh() {
 }
 // ---------------------------------------------------------------------------
 // Chart: free vs total RAM of all hosts over time, per-user lines faded.
-// The last 10 hours on a linear time axis, sampled evenly (scale=linear):
-// 120 points, one every 5 minutes.
+// The last 10 hours on a linear time axis, sampled evenly (the endpoint's
+// default scale=linear): 120 points, one every 5 minutes.
 // ---------------------------------------------------------------------------
 const TIMELINE_SPAN_SECS = 10 * 3600;
 const TIMELINE_API =
-  "." + "__API_BASE__" + `/v1/timeline?scale=linear&span_secs=${TIMELINE_SPAN_SECS}&points=120`;
+  "." + "__API_BASE__" + `/v1/timeline?span_secs=${TIMELINE_SPAN_SECS}&points=120`;
 const TIMELINE_MS = 15000;
 const SVG_NS = "http://www.w3.org/2000/svg";
 const chartBox = document.getElementById("chart");

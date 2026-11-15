@@ -435,12 +435,11 @@ pub fn dashboard(
 /// # Get free vs total RAM over time
 ///
 /// Free and total RAM summed over all hosts, and per user, sampled from the
-/// history at `points` times (default 120, 2-1000) spread logarithmically
-/// over the last `span_secs` (default 172800 = 2 days, 60-2592000): the
-/// samples are evenly spaced in `ln(age + 900 s)`, from `span_secs` ago to now,
-/// so recent minutes get more samples than past hours. With `scale=linear`
-/// the samples are evenly spaced in time instead (`scale=log` is the
-/// default). A host counts at
+/// history at `points` times (default 120, 2-1000) over the last `span_secs`
+/// (default 172800 = 2 days, 60-2592000), from `span_secs` ago to now. By
+/// default (`scale=linear`) the samples are evenly spaced in time; with
+/// `scale=log` they are evenly spaced in `ln(age + 900 s)`, so recent
+/// minutes get more samples than past hours. A host counts at
 /// a sample time if its latest report before it is within its timeout (as on
 /// the dashboard). Values are `null` where no host was live.
 #[openapi(tag = "Dashboard")]
@@ -465,9 +464,9 @@ pub fn timeline(
     }
     let now = Utc::now().trunc_subsecs(6);
     let samples = match scale {
-        None | Some("log") => log_samples(now, span_secs, points),
-        Some("linear") => linear_samples(now, span_secs, points),
-        Some(_) => return Err(Invalid("scale must be log or linear".into()).into()),
+        None | Some("linear") => linear_samples(now, span_secs, points),
+        Some("log") => log_samples(now, span_secs, points),
+        Some(_) => return Err(Invalid("scale must be linear or log".into()).into()),
     };
     let per_user = history
         .timeline(&samples, store.stale_after())
