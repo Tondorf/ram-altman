@@ -29,7 +29,7 @@ cargo fmt
 | `src/api.rs` | Routes, custom responders with OpenAPI docs, `spec_info()` |
 | `src/auth.rs` | `WriteAuth` request guard (bearer token, constant-time compare) + its OpenAPI security scheme |
 | `src/history.rs` | SQLite `History` (`Mutex<rusqlite::Connection>`): record, query, prune, user colors (`users` table, random generation), unit tests |
-| `static/img/` | Pictures for the page, served at `/img/` (`FileServer`); `sam-sad.jpg` / `sam-happy.jpg` (JPEG only) go here (see its README). The directory must exist, or startup panics |
+| `static/img/` | Pictures for the page, compiled into the binary and served at `/img/` by `api::image` (no `FileServer`: a Nix-built binary can't rely on the source tree at runtime); `sam-sad.jpg` / `sam-happy.jpg` (JPEG only) go here (see its README). Changing them needs a rebuild |
 | `static/index.html` | The dashboard page (plain HTML/CSS/JS, no build step), embedded with `include_str!` and served at `/` |
 | `src/model.rs` | Request/response types with `JsonSchema`, validation, hostname normalization |
 | `src/store.rs` | In-memory `Store` (`RwLock<HashMap<(username, hostname), Host>>`), ranking, stale filtering/pruning, unit tests |
@@ -49,7 +49,7 @@ cargo fmt
 | GET | `/api/v1/timeline?span_secs=S&points=N&scale=linear\|log` | | 200, 422, 500 |
 | GET | `/api/health` | | 200 |
 | GET | `/` | | 200, the dashboard page; not in the spec |
-| GET | `/img/{file}` | | 200 or 404, files from `static/img/`; not in the spec |
+| GET | `/img/{file}` | | 200 for `sam-sad.jpg` / `sam-happy.jpg` (compiled in), else 404; not in the spec |
 
 Rules:
 - **Auth:** PUT and DELETE need `Authorization: Bearer <token>`, where the token is any one of `api_tokens` (values chosen by the user), set in `Rocket.toml` / `ROCKET_API_TOKENS='["a","b"]'`. All tokens are compared in constant time, without stopping at a match. An empty list or an empty token fails startup. Reads are open. Auth failures go through the catcher: `401 {"error":"unauthorized"}`.

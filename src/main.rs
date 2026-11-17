@@ -13,7 +13,6 @@ use std::time::Duration;
 use chrono::{TimeDelta, Utc};
 use rocket::fairing::AdHoc;
 use rocket::figment::Figment;
-use rocket::fs::{FileServer, relative};
 use rocket::http::{Header, Status};
 use rocket::serde::json::Json;
 use rocket::{Build, Request, Rocket};
@@ -129,8 +128,8 @@ fn build_with(figment: Figment) -> Rocket<Build> {
     rocket
         // The dashboard page at the root (outside /api and the spec).
         .mount("/", routes![api::frontend])
-        // Pictures for the page (see static/img/README.md).
-        .mount("/img", FileServer::from(relative!("static/img")))
+        // Pictures for the page, compiled in (see static/img/README.md).
+        .mount("/img", routes![api::image])
         .mount(
             format!("{}/swagger-ui/", api::BASE_PATH),
             make_swagger_ui(&SwaggerUIConfig {
@@ -948,11 +947,23 @@ mod tests {
             assert_eq!(c.get(path).dispatch().status(), Status::NotFound, "{path}");
         }
 
-        // Picture slots, served from static/img/ (missing files are a JSON 404).
+        // Picture slots, compiled in from static/img/ (anything else is a JSON 404).
         assert!(
             html.contains(r#"data-name="sam-sad""#) && html.contains(r#"data-name="sam-happy""#)
         );
-        assert_eq!(c.get("/img/README.md").dispatch().status(), Status::Ok);
+        for name in ["sam-sad.jpg", "sam-happy.jpg"] {
+            let res = c.get(format!("/img/{name}")).dispatch();
+            assert_eq!(res.status(), Status::Ok, "{name}");
+            assert_eq!(res.content_type(), Some(ContentType::JPEG));
+            assert!(
+                res.into_bytes().unwrap().starts_with(&[0xff, 0xd8]),
+                "JPEG magic"
+            );
+        }
+        assert_eq!(
+            c.get("/img/README.md").dispatch().status(),
+            Status::NotFound
+        );
         let res = c.get("/img/does-not-exist.png").dispatch();
         assert_eq!(res.status(), Status::NotFound);
         assert_eq!(res.content_type(), Some(ContentType::JSON));

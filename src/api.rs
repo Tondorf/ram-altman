@@ -7,7 +7,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::{Arc, LazyLock};
 
 use chrono::{SubsecRound, Utc};
-use rocket::http::Status;
+use rocket::http::{ContentType, Status};
 use rocket::response::{self, Responder, content::RawHtml, status::NoContent};
 use rocket::serde::json::{self, Json};
 use rocket::{Request, State};
@@ -558,6 +558,18 @@ pub fn frontend() -> RawHtml<String> {
             .replace("__API_BASE__", BASE_PATH)
             .replace("__FRONTEND_VERSION__", frontend_version()),
     )
+}
+
+/// The page's pictures (`static/img/`), compiled in so the binary doesn't
+/// need the source tree at runtime. Mounted at `/img`; other names are 404.
+#[get("/<name>")]
+pub fn image(name: &str) -> Option<(ContentType, &'static [u8])> {
+    let bytes: &'static [u8] = match name {
+        "sam-sad.jpg" => include_bytes!("../static/img/sam-sad.jpg"),
+        "sam-happy.jpg" => include_bytes!("../static/img/sam-happy.jpg"),
+        _ => return None,
+    };
+    Some((ContentType::JPEG, bytes))
 }
 
 #[derive(Serialize, JsonSchema)]
